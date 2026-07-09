@@ -1,0 +1,131 @@
+services:
+
+  # Base de donnees svc-customer
+  mongo-customer:
+    container_name: mongo-customer
+    image: mongo:7
+    command: mongod --port 27017
+    expose:
+      - "27017"
+    volumes:
+      - mongo-customer-data:/data/db
+    networks:
+      - privnet
+    healthcheck:
+      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Base de données svc-order
+  mongo-order:
+    container_name: mongo-order
+    image: mongo:7
+    command: mongod --port 27017
+    expose:
+      - "27017"
+    volumes:
+      - mongo-order-data:/data/db
+    networks:
+      - privnet
+    healthcheck:
+      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # svc-customer
+  svc-customer:
+    container_name: svc-customer
+    build: ./svc-customer
+    environment:
+      MONGO_URI: "mongodb://mongo-customer:27017"
+    ports:
+      - "8001:8001"
+    depends_on:
+      mongo-customer:
+        condition: service_healthy
+    networks:
+      - privnet
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8001/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # svc-order
+  svc-order:
+    container_name: svc-order
+    build: ./svc-order
+    environment:
+      MONGO_URI: "mongodb://mongo-order:27017"
+      CUSTOMER_SERVICE_URL: "http://svc-customer:8001"
+      USAGE_API_URL: "http://usage-api:8080"
+    ports:
+      - "8002:8002"
+    depends_on:
+      mongo-order:
+        condition: service_healthy
+      svc-customer:
+        condition: service_healthy
+    networks:
+      - privnet
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8002/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Prometheus
+  prometheus:
+    container_name: prometheus
+    image: prom/prometheus:latest
+    volumes:
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml
+    ports:
+      - "9090:9090"
+    networks:
+      - privnet
+
+  # Grafana
+  grafana:
+    container_name: grafana
+    image: grafana/grafana:latest
+    ports:
+      - "3000:3000"
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: "admin"
+    depends_on:
+      - prometheus
+    networks:
+      - privnet
+
+  # API Gateway (Nginx)
+  api-gateway:
+    container_name: api-gateway
+    image: nginx:alpine
+    volumes:
+      - ./gateway/nginx.conf:/etc/nginx/nginx.conf:ro
+    ports:
+      - "8080:8080"
+    depends_on:
+      svc-customer:
+        condition: service_healthy
+      svc-order:
+        condition: service_healthy
+    networks:
+      - privnet
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+networks:
+  privnet:
+    external: true
+    name: privnet
+
+volumes:
+  mongo-customer-data:
+  mongo-order-data:
